@@ -1,0 +1,46 @@
+# dependencies (bun install)
+node_modules
+
+# output
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+_.log
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# config (contains API key)
+config.yaml
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# IDE artifacts
+.trae
+.idea
+
+# Finder (MacOS) folder config
+.DS_Store
+
+# runtime user data (privacy-sensitive)
+data/conversations/*.jsonl
+data/memory/daily/*.md
+data/memory/facts/*.md
+data/memory/facts/.archive/
+data/USER.md
+data/MEMORY.md

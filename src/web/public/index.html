@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>小徐 - AI 女友</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💕</text></svg>">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <h1>AI</h1>
+      <div id="status-bar">未连接</div>
+      <button id="settings-btn">⚙️</button>
+    </header>
+
+    <main id="main">
+      <div id="chat-panel">
+        <div id="messages"></div>
+      </div>
+
+      <aside id="console-panel" class="hidden-mobile">
+        <div class="tabs">
+          <button class="tab active" data-tab="memory">记忆</button>
+          <button class="tab" data-tab="profile">用户画像</button>
+          <button class="tab" data-tab="dream">Dream</button>
+          <button class="tab" data-tab="world">世界书</button>
+          <button class="tab" data-tab="settings">设置</button>
+        </div>
+
+        <div id="memory-tab" class="tab-content active">
+          <pre id="memory-content">加载中...</pre>
+          <button id="memory-refresh-btn" class="action-btn">刷新</button>
+        </div>
+
+        <div id="profile-tab" class="tab-content">
+          <pre id="profile-content">还不太了解你，多聊聊吧~</pre>
+          <button id="profile-refresh-btn" class="action-btn">刷新</button>
+        </div>
+
+        <div id="dream-tab" class="tab-content">
+          <pre id="dream-content">暂无梦境记录</pre>
+          <button id="dream-btn" class="action-btn">触发 Dream</button>
+        </div>
+
+        <div id="world-tab" class="tab-content">
+          <div id="world-entries-list">
+            <p id="world-empty" class="hint-text">世界书为空</p>
+          </div>
+          <div class="settings-section">
+            <h3>添加条目</h3>
+            <input type="text" id="world-keys" placeholder="关键词（逗号分隔）">
+            <textarea id="world-content" rows="3" placeholder="注入内容..."></textarea>
+            <button id="world-add-btn" class="action-btn">添加</button>
+          </div>
+          <button id="world-refresh-btn" class="action-btn secondary">刷新</button>
+        </div>
+
+        <div id="settings-tab" class="tab-content">
+          <div class="settings-section">
+            <h3>模型选择</h3>
+            <select id="model-select">
+              <option value="deepseek-v4-flash">deepseek-v4-flash (便宜)</option>
+              <option value="deepseek-v4-pro">deepseek-v4-pro (更强)</option>
+            </select>
+          </div>
+
+          <div class="settings-section">
+            <h3>人格模板</h3>
+            <select id="template-select">
+              <option value="">-- 选择模板 --</option>
+            </select>
+            <button id="template-apply" class="action-btn">应用模板</button>
+          </div>
+
+          <div class="settings-section">
+            <h3>人格编辑</h3>
+            <div class="persona-tabs">
+              <button class="persona-tab active" data-persona="identity">身份</button>
+              <button class="persona-tab" data-persona="style">风格</button>
+              <button class="persona-tab" data-persona="emotion">情感</button>
+              <button class="persona-tab" data-persona="constraints">约束</button>
+              <button class="persona-tab" data-persona="background">背景</button>
+            </div>
+            <textarea id="persona-identity" class="persona-editor active" rows="6" placeholder="身份与硬规则..."></textarea>
+            <textarea id="persona-style" class="persona-editor" rows="6" placeholder="表达风格..."></textarea>
+            <textarea id="persona-emotion" class="persona-editor" rows="6" placeholder="情感逻辑..."></textarea>
+            <textarea id="persona-constraints" class="persona-editor" rows="6" placeholder="硬约束..."></textarea>
+            <textarea id="persona-background" class="persona-editor" rows="6" placeholder="外貌、经历、世界观..."></textarea>
+            <div class="settings-actions">
+              <button id="persona-save" class="action-btn">保存人格</button>
+              <button id="persona-import" class="action-btn secondary">导入文件</button>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>状态</h3>
+            <div class="config-item">
+              <span>模型:</span>
+              <span id="config-model">-</span>
+            </div>
+            <div class="config-item">
+              <span>缓存命中:</span>
+              <span id="config-cache">-</span>
+            </div>
+            <div class="config-item">
+              <span>连接数:</span>
+              <span id="config-clients">-</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <footer id="input-area">
+      <input type="text" id="message-input" placeholder="想说点什么..." autocomplete="off">
+      <button id="send-btn">发送</button>
+    </footer>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
