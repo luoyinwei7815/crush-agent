@@ -128,7 +128,7 @@ const STRUCTURE_PROMPT = `基于以下对话，生成结构化的配置文件。
 
 const MAX_PARSE_RETRIES = 2;
 
-async function callProWithRetry(client: DeepSeekClient, messages: ChatMessage[], maxTokens = 4096): Promise<string> {
+async function callProWithRetry(client: DeepSeekClient, messages: ChatMessage[], maxTokens = 16384): Promise<string> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= MAX_PARSE_RETRIES; attempt++) {
     try {
@@ -172,13 +172,15 @@ function toInitResult(proResponse: ProResponse): InitResult {
       constraints: "# 硬约束\n<!-- 用户纠正的硬约束会追加到这里 -->",
       background: proResponse.persona.background,
     },
-    worldEntries: proResponse.world.map((w) => ({
-      key: w.key,
-      content: w.content,
-      constant: w.constant ?? false,
-      order: w.order ?? 100,
-      weight: w.weight ?? 100,
-    })),
+    worldEntries: proResponse.world
+      .filter((w) => Array.isArray(w.key) && w.key.length > 0 && typeof w.content === "string" && w.content.trim().length > 0)
+      .map((w) => ({
+        key: w.key,
+        content: w.content,
+        constant: w.constant ?? false,
+        order: w.order ?? 100,
+        weight: w.weight ?? 100,
+      })),
   };
 }
 

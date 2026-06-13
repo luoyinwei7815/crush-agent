@@ -6,8 +6,6 @@ import type { ChatMessage } from "../api/deepseek";
 import { estimateTokens } from "../utils/token";
 import { ensureDir } from "../utils/fs";
 
-// Memory 类型已统一为 MemoryEntry（来自 core/types.ts）
-
 interface MemoryFrontmatter {
   name: string;
   title: string;
@@ -141,6 +139,11 @@ export class MemoryStore implements IMemory {
     } catch {
       return null;
     }
+  }
+
+  exists(name: string): boolean {
+    const filePath = join(this.dir, `${name}.md`);
+    return existsSync(filePath);
   }
 
   getIndex(): string {

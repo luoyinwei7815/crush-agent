@@ -69,7 +69,13 @@ export async function foldHistory(
   }
 
   if (!summary.trim()) {
-    return messages;
+    const keepCount = Math.min(6, messages.length);
+    const fallback = messages.slice(-keepCount);
+    const fallbackSummary: ChatMessage = {
+      role: "system",
+      content: "[历史摘要生成失败，已截断早期对话]",
+    };
+    return [fallbackSummary, ...fallback];
   }
 
   const summaryMessage: ChatMessage = {

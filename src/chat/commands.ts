@@ -69,7 +69,7 @@ export async function dispatchCommand(input: string, ctx: CommandContext): Promi
 
 // ==================== 精确命令 ====================
 
-exact("/quit", async (_a, ctx) => {
+exact("/quit", async (_a, ctx): Promise<CommandResult> => {
   if (ctx.messages.length > 0) {
     ctx.adapter.printSystem("\n🌙 退出前执行梦境...");
     try {
@@ -83,7 +83,7 @@ exact("/quit", async (_a, ctx) => {
   return "quit";
 });
 
-exact("/memory", (_a, ctx) => {
+exact("/memory", (_a, ctx): CommandResult => {
   const index = ctx.memory.getIndex();
   ctx.adapter.printSystem("\n=== 长期记忆 ===");
   ctx.adapter.printSystem(index || "(暂无记忆)");
@@ -91,7 +91,7 @@ exact("/memory", (_a, ctx) => {
   return "handled";
 });
 
-exact("/dream", async (_a, ctx) => {
+exact("/dream", async (_a, ctx): Promise<CommandResult> => {
   ctx.adapter.printSystem("\n正在整理记忆...");
   const report = await ctx.dream.sweep();
   ctx.adapter.printSystem(`\n=== Dream 报告 ===`);
@@ -109,7 +109,7 @@ exact("/dream", async (_a, ctx) => {
   return "handled";
 });
 
-exact("/constraints", (_a, ctx) => {
+exact("/constraints", (_a, ctx): CommandResult => {
   const c = ctx.persona.getConstraints();
   ctx.adapter.printSystem("\n=== 硬约束 ===");
   ctx.adapter.printSystem(c || "(暂无硬约束)");
@@ -117,7 +117,7 @@ exact("/constraints", (_a, ctx) => {
   return "handled";
 });
 
-exact("/whoami", (_a, ctx) => {
+exact("/whoami", (_a, ctx): CommandResult => {
   const p = resolve(process.cwd(), "data/USER.md");
   if (existsSync(p)) {
     ctx.adapter.printSystem("\n=== 我认识的你 ===");
@@ -129,7 +129,7 @@ exact("/whoami", (_a, ctx) => {
   return "handled";
 });
 
-exact("/world", (_a, ctx) => {
+exact("/world", (_a, ctx): CommandResult => {
   const entries = ctx.world.listEntries();
   if (entries.length === 0) {
     ctx.adapter.printSystem("世界书为空");
@@ -143,7 +143,7 @@ exact("/world", (_a, ctx) => {
   return "handled";
 });
 
-exact("/reload-persona", (_a, ctx) => {
+exact("/reload-persona", (_a, ctx): CommandResult => {
   ctx.persona.reload();
   const userContent = ctx.userProfile?.toMarkdown() ?? "";
   const newP = composePrefix(
@@ -157,19 +157,19 @@ exact("/reload-persona", (_a, ctx) => {
   return "handled";
 });
 
-exact("/reload-memory", (_a, ctx) => {
+exact("/reload-memory", (_a, ctx): CommandResult => {
   ctx.memory.reindex();
   ctx.adapter.printSystem("记忆索引已重建");
   return "handled";
 });
 
-exact("/reload-world", (_a, ctx) => {
+exact("/reload-world", (_a, ctx): CommandResult => {
   ctx.world.reload();
   ctx.adapter.printSystem("世界书已重载");
   return "handled";
 });
 
-exact("/history", (_a, ctx) => {
+exact("/history", (_a, ctx): CommandResult => {
   const entries = ctx.conversations.getToday();
   if (entries.length === 0) {
     ctx.adapter.printSystem("今日暂无对话记录");
@@ -184,7 +184,7 @@ exact("/history", (_a, ctx) => {
   return "handled";
 });
 
-exact("/help", (_a, ctx) => {
+exact("/help", (_a, ctx): CommandResult => {
   ctx.adapter.printSystem(
     [
       "\n=== 可用命令 ===",
@@ -221,7 +221,7 @@ exact("/help", (_a, ctx) => {
 
 // ==================== 前缀命令（注册顺序：长前缀在前） ====================
 
-prefix("/persona-file", (args, ctx) => {
+prefix("/persona-file", (args, ctx): CommandResult => {
   const VALID_DIMS = ["identity", "style", "emotion", "constraints", "background"];
   const tokens = args.split(/\s+/);
   let filePath: string;
@@ -246,7 +246,7 @@ prefix("/persona-file", (args, ctx) => {
   }
 
   const fullPath = resolve(process.cwd(), filePath);
-  const allowedDirs = [resolve(process.cwd(), "data"), resolve(process.cwd(), "src")];
+  const allowedDirs = [resolve(process.cwd(), "data")];
   const normalizedFull = fullPath.replace(/\\/g, "/");
   const isAllowed = allowedDirs.some((dir) => {
     const normalizedDir = dir.replace(/\\/g, "/");
@@ -270,7 +270,7 @@ prefix("/persona-file", (args, ctx) => {
   return "handled";
 });
 
-prefix("/persona-save", (args, ctx) => {
+prefix("/persona-save", (args, ctx): CommandResult => {
   try {
     const data = JSON.parse(args);
     const dir = resolve(process.cwd(), "data/persona");
@@ -286,7 +286,7 @@ prefix("/persona-save", (args, ctx) => {
   return "handled";
 });
 
-prefix("/persona", (args, ctx) => {
+prefix("/persona", (args, ctx): CommandResult => {
   const dimMatch = args.match(/^(identity|style|emotion|constraints|background)\s+/);
   const dir = resolve(process.cwd(), "data/persona");
   ensureDir(dir);
@@ -304,7 +304,7 @@ prefix("/persona", (args, ctx) => {
   return "handled";
 });
 
-prefix("/model", (args, ctx) => {
+prefix("/model", (args, ctx): CommandResult => {
   const valid = ["deepseek-v4-flash", "deepseek-v4-pro"];
   if (valid.includes(args) || args.startsWith("deepseek")) {
     ctx.api.setDefaultModel(args);
@@ -315,7 +315,7 @@ prefix("/model", (args, ctx) => {
   return "handled";
 });
 
-prefix("/correct", async (args, ctx) => {
+prefix("/correct", async (args, ctx): Promise<CommandResult> => {
   const recent = ctx.messages.slice(-6).map((m) => `${m.role}: ${m.content}`).join("\n");
   const result = await ctx.correct.classify(args, ctx.persona.getConstraints(), recent);
   switch (result.type) {
@@ -346,7 +346,7 @@ prefix("/correct", async (args, ctx) => {
   return "handled";
 });
 
-prefix("/world-add", (args, ctx) => {
+prefix("/world-add", (args, ctx): CommandResult => {
   const parts = args.split("|");
   if (parts.length === 2) {
     const keys = parts[0]!.split(",").map((k) => k.trim());
@@ -358,7 +358,7 @@ prefix("/world-add", (args, ctx) => {
   return "handled";
 });
 
-prefix("/world-del", (args, ctx) => {
+prefix("/world-del", (args, ctx): CommandResult => {
   ctx.world.removeEntry(args);
   ctx.adapter.printSystem(`已删除世界书条目: ${args}`);
   return "handled";

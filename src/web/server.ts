@@ -16,7 +16,7 @@ export interface WebServerOptions {
 }
 
 export class WebServer {
-  private server: Server | null = null;
+  private server: Server<WsData> | null = null;
   private clients: Map<string, ServerWebSocket<WsData>> = new Map();
   private options: WebServerOptions;
   private inputResolve: ((value: string) => void) | null = null;
@@ -32,7 +32,7 @@ export class WebServer {
     this.server = serve({
       port,
       hostname: host,
-      fetch: async (req: Request, server: Server) => {
+      fetch: async (req: Request, server: Server<WsData>) => {
         const url = new URL(req.url);
 
         if (url.pathname === "/ws") {

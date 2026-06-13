@@ -13,11 +13,13 @@ export interface AppConfig {
     max_tokens?: number;
   };
   memory: {
-    enabled: boolean;
-    daily_notes: boolean;
     dream: {
       min_score: number;
       min_recurrence: number;
     };
+  };
+  world?: {
+    token_budget?: number;
+    scan_depth?: number;
   };
 }

@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import * as yaml from "js-yaml";
 import chalk from "chalk";
@@ -35,17 +35,38 @@ function parseArgs(): { web: boolean; port: number } {
 }
 
 async function main() {
-  let setupResult: { api_key: string; base_url: string; model: string } | undefined;
   if (needsSetup()) {
-    setupResult = await runSetup();
+    await runSetup();
   }
 
   const { web, port } = parseArgs();
   const configPath = resolve(process.cwd(), "config.yaml");
-  const config = yaml.load(readFileSync(configPath, "utf-8")) as AppConfig;
+
+  let config: AppConfig;
+  if (existsSync(configPath)) {
+    config = yaml.load(readFileSync(configPath, "utf-8")) as AppConfig;
+  } else {
+    config = {
+      api: {
+        base_url: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1",
+        key: process.env.DEEPSEEK_API_KEY || "",
+        model: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
+      },
+      context: {
+        fold_threshold: 0.75,
+        fold_aggressive_threshold: 0.78,
+        force_summary_threshold: 0.80,
+        tail_fraction: 0.2,
+        tail_fraction_aggressive: 0.1,
+      },
+      memory: {
+        dream: { min_score: 0.6, min_recurrence: 2 },
+      },
+    };
+  }
 
   const persona = new PersonaLoader("data");
-  const world = new WorldEngine("data/world/entries.json", 2000);
+  const world = new WorldEngine("data/world/entries.json", config.world?.token_budget ?? 4000);
 
   if (!persona.exists()) {
     const initResult = await runInit(

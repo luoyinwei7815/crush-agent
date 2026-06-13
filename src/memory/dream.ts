@@ -169,6 +169,12 @@ export class DreamSystem {
         candidate.recurrence >= this.config.min_recurrence
       ) {
         const name = toKebabCase(candidate.title);
+        let uniqueName = name;
+        let suffix = 2;
+        while (this.store.exists(uniqueName)) {
+          uniqueName = `${name}-${suffix}`;
+          suffix++;
+        }
 
         const autoKeywords = candidate.content
           .split(/[\s,，。！？、；：""''（）()\[\]【】\n\r]+/)
@@ -176,7 +182,7 @@ export class DreamSystem {
           .slice(0, 5);
 
         const memory: MemoryEntry = {
-          name,
+          name: uniqueName,
           title: candidate.title,
           description: candidate.content.slice(0, 100),
           category: candidate.category,

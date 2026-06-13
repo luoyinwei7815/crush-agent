@@ -42,6 +42,7 @@ export interface IMemory {
   get(name: string): MemoryEntry | null;
   list(): MemoryEntry[];
   delete(name: string): void;
+  exists(name: string): boolean;
   reindex(): void;
 }
 
