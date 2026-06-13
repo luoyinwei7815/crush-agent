@@ -1,6 +1,6 @@
 # Crush Agent 项目文档
 
-> 伴侣型 AI Agent，基于 DeepSeek API，具备五层人格、Dream 记忆系统和自主梦境优化。
+> 伴侣型 AI Agent，基于 DeepSeek API，具备五层人格、Dream 记忆系统和对话概要。
 
 ## 技术栈
 
@@ -25,12 +25,12 @@ src/
  │   └── deepseek.ts       # DeepSeek 客户端（流式 + 指数退避重试 + Flash/Pro 分级计费）
  │
  ├── chat/
- │   ├── loop.ts           # 主对话循环（输入分发 → 对话 → 工具调用 → 压缩 → 笔记）
+ │   ├── loop.ts           # 主对话循环（输入分发 → 对话 → 工具调用 → 压缩）
  │   ├── commands.ts       # 命令注册系统（exact/prefix 匹配 + dispatchCommand）
- │   └── tools.ts          # AI 工具定义与执行（remember/recall/forget/note）
+ │   └── tools.ts          # AI 工具定义与执行（remember/recall/forget）
  │
  ├── core/
- │   ├── types.ts          # 接口层：IPersona / IMemory / IWorld / IDailyNotes / IUserProfile / ChatContext
+ │   ├── types.ts          # 接口层：IPersona / IMemory / IWorld / IUserProfile / ChatContext
  │   └── config.ts         # AppConfig 类型定义
  │
  ├── context/
@@ -40,14 +40,14 @@ src/
  ├── memory/
  │   ├── store.ts          # 记忆存储（YAML frontmatter markdown + 倒排索引扫描）
  │   ├── search.ts         # 记忆搜索（ngram 分词 + 倒排索引 + 权重评分）
- │   ├── dream.ts          # Dream 系统（Light→Deep→REM 三阶段 + 自主梦境人格优化）
- │   ├── daily.ts          # 每日笔记（按日期自动记录）
+ │   ├── dream.ts          # Dream 系统（分析对话 → 人格优化）
+ │   ├── summary.ts        # 对话概要（LLM 每 3 天生成结构化概要）
  │   ├── conversation.ts   # 对话缓存（JSONL 按日存储，本地时间，容错损坏行）
  │   └── user-profile.ts   # 用户画像（正则提取特征 + ngram 主题提取）
  │
  ├── persona/
  │   ├── loader.ts         # 五层人格加载器（identity/style/emotion/constraints/background）
- │   └── correct.ts        # 纠正引擎（智能分类 + 维度定向优化 + 冲突检测）
+ │   └── correct.ts        # 纠正引擎（Flash 意图识别 + Pro 分类/改写 + 冲突检测）
  │
  ├── prefix/
  │   ├── immutable.ts      # ImmutablePrefix（readonly + Object.freeze + SHA256 指纹）
@@ -64,7 +64,7 @@ src/
  ├── web/
  │   ├── server.ts         # HTTP + WebSocket 服务器（Bun serve，路径遍历防护）
  │   ├── adapter.ts        # Web 输出适配器
- │   └── public/           # 前端（index.html + app.js + style.css，Warm Intimacy 暗色主题）
+ │   └── public/           # 前端（index.html + app.js + style.css，暗色主题，文件拖拽导入）
  │
  └── utils/
      ├── token.ts          # Token 估算（CJK=2, ASCII=0.3 启发式）
@@ -86,7 +86,7 @@ data/
  │   └── background.md     # 外貌 + 经历 + 世界观
  ├── memory/
  │   ├── facts/            # 长期记忆（*.md + YAML frontmatter）
- │   └── daily/            # 每日笔记（YYYY-MM-DD.md）
+ │   └── summaries/        # 对话概要（YYYY-MM-DD.md，每 3 天 LLM 生成）
  ├── conversations/        # 对话缓存（YYYY-MM-DD.jsonl）
  ├── world/entries.json    # 世界书条目
  ├── USER.md               # 用户画像
@@ -148,7 +148,7 @@ interface OutputAdapter {
 
 命令在 `src/chat/commands.ts` 中注册，分两种匹配模式：
 
-- **精确匹配**：`/quit`、`/memory`、`/dream`、`/whoami`、`/constraints`、`/world`、`/reload-persona`、`/reload-memory`、`/reload-world`、`/history`、`/help`
+- **精确匹配**：`/quit`、`/memory`、`/dream`、`/whoami`、`/constraints`、`/world`、`/reload-persona`、`/reload-memory`、`/reload-world`、`/history`、`/help`、`/summarize`
 - **前缀匹配**（按注册顺序）：`/persona-file` → `/persona-save` → `/persona` → `/model` → `/correct` → `/world-add` → `/world-del`
 
 新增命令只需在 `commands.ts` 中 `exact("/cmd", handler)` 或 `prefix("/cmd", handler)` 一行注册。
@@ -159,7 +159,13 @@ interface OutputAdapter {
 
 **三层上下文压缩**：75% fold（保留尾部 + API 摘要）→ 78% fold_aggressive（更激进）→ 80% force_summary（API 摘要，失败回退截断）。
 
-**Dream 记忆系统**：Light 阶段提取候选 → Deep 阶段评分晋升 → REM 阶段主题提取。自主梦境：10 分钟空闲自动触发 V4 Pro 人格优化。
+**记忆系统**：
+- 对话缓存（ConversationStore）：JSONL 全量保存，是所有记忆的数据源
+- Dream（DreamSystem）：分析对话 → 完善人格（style/emotion/background）
+- 对话概要（SummaryMemory）：每 3 天 LLM 生成结构化概要，记录聊了什么、发生了什么
+- 用户画像（UserProfileManager）：记住用户是谁（偏好/性格/习惯）
+
+**纠正系统**：Flash 做意图识别（简单 yes/no），Pro 做分类和改写（需要推理）。纠正后立即重建 prefix 生效。
 
 **scanContext vs MemorySearch**：两套搜索机制互补。`scanContext` 是轻量关键词匹配（每轮调用），`MemorySearch` 是 ngram 倒排索引（recall 工具触发）。不合并。
 
@@ -179,11 +185,4 @@ interface OutputAdapter {
     "@types/js-yaml": "^4.0.9"
   }
 }
-```
-
-## 构建
-
-```bash
-bun build --target=bun src/index.ts --outdir /tmp/crush-build
-# 181 modules, ~0.49 MB, 0 errors
 ```

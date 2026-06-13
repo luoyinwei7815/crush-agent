@@ -22,7 +22,7 @@ curl -fsSL https://bun.sh/install | bash          # macOS / Linux
 # powershell -c "irm bun.sh/install.ps1 | iex"    # Windows
 
 # 克隆并安装
-git clone https://github.com/YOUR_USERNAME/crush-agent.git
+git clone https://github.com/luoyinwei7815/crush-agent.git
 cd crush-agent
 bun install
 
@@ -39,7 +39,7 @@ bun run web      # Web 模式 → http://localhost:3000
 
 ```
 你: 今天好累啊
-小徐: 又加班了？早点休息，别熬太晚。
+小助手: 又加班了？早点休息，别熬太晚。
 [缓存: 96.3% | 费用: ¥0.002 | 模型: deepseek-v4-flash]
 ```
 
@@ -80,10 +80,10 @@ Chat Engine (loop.ts + commands.ts)
     ├── Memory System
     │   ├── store: YAML frontmatter markdown 文件
     │   ├── search: ngram 倒排索引 + 权重评分
-    │   ├── dream: Light→Deep→REM 三阶段 + 自主梦境优化
-    │   ├── daily: 按日期自动记录
+    │   ├── dream: 分析对话 → 优化人格（单方法，10 分钟空闲触发）
+    │   ├── summary: 对话概要（LLM 每 3 天生成结构化概要）
     │   ├── conversation: JSONL 对话缓存
-    │   └── user-profile: 正则特征提取
+    │   └── user-profile: 用户画像（Pro 分析对话提取特征）
     │
     ├── Persona System (五层文件 + CorrectEngine)
     │   └── identity / style / emotion / constraints / background
@@ -106,9 +106,9 @@ Chat Engine (loop.ts + commands.ts)
 ### 记忆系统
 
 ```
-每日笔记 → Dream Light（提取候选）→ Dream Deep（评分晋升）→ 长期记忆
+对话缓存（JSONL）→ 概要（每 3 天 LLM 生成）+ 用户画像（Pro 分析）
                                                         ↓
-空闲 10 分钟 → 自主梦境 → V4 Pro 分析对话 → 优化人格文件
+空闲 10 分钟 → Dream → V4 Pro 分析对话 → 优化人格文件（style/emotion/background）
 ```
 
 ### 命令注册
@@ -134,10 +134,10 @@ context:
   fold_aggressive_threshold: 0.78
   force_summary_threshold: 0.80
   tail_fraction: 0.2
-memory:
-  dream:
-    min_score: 0.6
-    min_recurrence: 2
+memory: {}
+world:
+  token_budget: 4000
+  scan_depth: 8
 ```
 
 ## 项目文档

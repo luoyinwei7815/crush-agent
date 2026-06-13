@@ -33,51 +33,38 @@ export class ContextManager {
     return messages.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
   }
 
-  checkBeforeTurn(messages: ChatMessage[], contextMax: number): CompressionDecision {
-    const estimatedTokens = this.estimateTotalTokens(messages);
-    const ratio = estimatedTokens / contextMax;
-
+  private decide(ratio: number): CompressionDecision {
     if (ratio > this.forceSummaryThreshold) {
-      this.alreadyFoldedThisTurn = true;
       return { action: "force_summary" };
     }
-
     if (ratio > this.foldAggressiveThreshold) {
-      this.alreadyFoldedThisTurn = true;
       return { action: "fold_aggressive", tailFraction: this.tailFractionAggressive };
     }
-
     if (ratio > this.foldThreshold) {
-      this.alreadyFoldedThisTurn = true;
       return { action: "fold", tailFraction: this.tailFraction };
     }
-
     return { action: "none" };
+  }
+
+  checkBeforeTurn(messages: ChatMessage[], contextMax: number): CompressionDecision {
+    const ratio = this.estimateTotalTokens(messages) / contextMax;
+    const decision = this.decide(ratio);
+    if (decision.action !== "none") {
+      this.alreadyFoldedThisTurn = true;
+    }
+    return decision;
   }
 
   checkAfterTurn(usage: ChatUsage, contextMax: number): CompressionDecision {
     if (this.alreadyFoldedThisTurn) {
       return { action: "none" };
     }
-
     const ratio = usage.prompt_tokens / contextMax;
-
-    if (ratio > this.forceSummaryThreshold) {
+    const decision = this.decide(ratio);
+    if (decision.action !== "none") {
       this.alreadyFoldedThisTurn = true;
-      return { action: "force_summary" };
     }
-
-    if (ratio > this.foldAggressiveThreshold) {
-      this.alreadyFoldedThisTurn = true;
-      return { action: "fold_aggressive", tailFraction: this.tailFractionAggressive };
-    }
-
-    if (ratio > this.foldThreshold) {
-      this.alreadyFoldedThisTurn = true;
-      return { action: "fold", tailFraction: this.tailFraction };
-    }
-
-    return { action: "none" };
+    return decision;
   }
 
   resetTurn(): void {

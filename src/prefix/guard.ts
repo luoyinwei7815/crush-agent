@@ -1,6 +1,8 @@
 import { createHash } from "crypto";
 import type { ChatMessage } from "../api/deepseek";
 
+const MAX_HISTORY = 50;
+
 export class PrefixGuard {
   private history: string[] = [];
   private totalChecks: number = 0;
@@ -34,6 +36,9 @@ export class PrefixGuard {
     }
 
     this.history.push(currentHash);
+    if (this.history.length > MAX_HISTORY) {
+      this.history = this.history.slice(-MAX_HISTORY);
+    }
     this.changeCount++;
     return {
       stable: false,

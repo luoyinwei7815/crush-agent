@@ -1,7 +1,5 @@
-import * as readline from "readline";
-import chalk from "chalk";
 import { DeepSeekClient, type ChatMessage } from "./api/deepseek";
-import { question } from "./utils/readline";
+import type { OutputAdapter } from "./ui/adapter";
 
 export interface InitResult {
   persona: {
@@ -128,7 +126,7 @@ const STRUCTURE_PROMPT = `基于以下对话，生成结构化的配置文件。
 
 const MAX_PARSE_RETRIES = 2;
 
-async function callProWithRetry(client: DeepSeekClient, messages: ChatMessage[], maxTokens = 16384): Promise<string> {
+async function callProWithRetry(client: DeepSeekClient, messages: ChatMessage[], adapter: OutputAdapter, maxTokens = 16384): Promise<string> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= MAX_PARSE_RETRIES; attempt++) {
     try {
@@ -136,7 +134,7 @@ async function callProWithRetry(client: DeepSeekClient, messages: ChatMessage[],
     } catch (err) {
       lastError = err as Error;
       if (attempt < MAX_PARSE_RETRIES) {
-        console.log(chalk.yellow(`\n调用失败，正在重试 (${attempt + 2}/${MAX_PARSE_RETRIES + 1})...`));
+        adapter.printSystem(`调用失败，正在重试 (${attempt + 2}/${MAX_PARSE_RETRIES + 1})...`);
       }
     }
   }
@@ -184,64 +182,55 @@ function toInitResult(proResponse: ProResponse): InitResult {
   };
 }
 
-function displayResult(result: InitResult): void {
-  console.log(chalk.magenta("\n═══════════════════════════════"));
-  console.log(chalk.magenta("  生成的人格设定"));
-  console.log(chalk.magenta("═══════════════════════════════\n"));
+function displayResult(result: InitResult, adapter: OutputAdapter): void {
+  adapter.printSystem("\n═══════════════════════════════");
+  adapter.printSystem("  生成的人格设定");
+  adapter.printSystem("═══════════════════════════════\n");
 
-  console.log(chalk.yellow("【身份与硬规则】"));
-  console.log(result.persona.identity);
-  console.log();
+  adapter.printSystem("【身份与硬规则】");
+  adapter.printSystem(result.persona.identity);
 
-  console.log(chalk.yellow("【表达风格】"));
-  console.log(result.persona.style);
-  console.log();
+  adapter.printSystem("【表达风格】");
+  adapter.printSystem(result.persona.style);
 
-  console.log(chalk.yellow("【情感逻辑】"));
-  console.log(result.persona.emotion);
-  console.log();
+  adapter.printSystem("【情感逻辑】");
+  adapter.printSystem(result.persona.emotion);
 
-  console.log(chalk.yellow("【背景故事】"));
-  console.log(result.persona.background);
-  console.log();
+  adapter.printSystem("【背景故事】");
+  adapter.printSystem(result.persona.background);
 
-  console.log(chalk.magenta("═══════════════════════════════"));
-  console.log(chalk.magenta("  生成的世界设定"));
-  console.log(chalk.magenta("═══════════════════════════════\n"));
+  adapter.printSystem("═══════════════════════════════");
+  adapter.printSystem("  生成的世界设定");
+  adapter.printSystem("═══════════════════════════════\n");
 
   if (result.worldEntries.length === 0) {
-    console.log(chalk.gray("(无世界条目)"));
+    adapter.printSystem("(无世界条目)");
   } else {
     for (const entry of result.worldEntries) {
-      console.log(chalk.yellow(`[${entry.key.join(", ")}]`) + ` ${entry.content}`);
+      adapter.printSystem(`[${entry.key.join(", ")}] ${entry.content}`);
     }
   }
 
-  console.log(chalk.magenta("\n═══════════════════════════════\n"));
+  adapter.printSystem("\n═══════════════════════════════\n");
 }
 
 export async function runInit(
   apiKey: string,
-  baseUrl: string
+  baseUrl: string,
+  adapter: OutputAdapter
 ): Promise<InitResult> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
   const proClient = new DeepSeekClient({
     base_url: baseUrl,
     key: apiKey,
     model: "deepseek-v4-pro",
   });
 
-  // 第一阶段：多轮对话收集信息
-  console.log(chalk.magenta("\n═══════════════════════════════"));
-  console.log(chalk.magenta("  AI 伴侣初始化向导"));
-  console.log(chalk.magenta("═══════════════════════════════\n"));
-  console.log(chalk.gray("让我们一起创造一个理想的 Ta 吧！"));
-  console.log(chalk.gray("我会通过对话了解你的想法，最后帮你整理成配置。\n"));
-  console.log(chalk.gray("随时输入 'ok' 或 '完成' 结束对话，生成配置。\n"));
+  adapter.printSystem("\n═══════════════════════════════");
+  adapter.printSystem("  AI 伴侣初始化向导");
+  adapter.printSystem("═══════════════════════════════\n");
+  adapter.printSystem("让我们一起创造一个理想的 Ta 吧！");
+  adapter.printSystem("我会通过对话了解你的想法，最后帮你整理成配置。\n");
+  adapter.printSystem("随时输入 'ok' 或 '完成' 结束对话，生成配置。\n");
 
   const conversationHistory: ChatMessage[] = [
     { role: "system", content: INIT_WIZARD_PROMPT }
@@ -255,60 +244,55 @@ export async function runInit(
 
   let openingResponse: string;
   try {
-    openingResponse = await callProWithRetry(proClient, openingPrompt);
+    openingResponse = await callProWithRetry(proClient, openingPrompt, adapter);
   } catch (err) {
-    console.log(chalk.red(`\nAI 向导启动失败: ${(err as Error).message}`));
-    console.log(chalk.gray("回退到手动输入模式...\n"));
-    rl.close();
+    adapter.printError(`AI 向导启动失败: ${(err as Error).message}`);
+    adapter.printSystem("回退到手动输入模式...");
     throw err;
   }
 
   conversationHistory.push({ role: "assistant", content: openingResponse });
-  console.log(chalk.magenta("向导: ") + openingResponse);
+  adapter.printSystem("[向导] " + openingResponse);
 
   // 多轮对话循环
   let infoCollected = false;
   while (!infoCollected) {
-    const userInput = await question(rl, chalk.cyan("\n你: "));
+    const userInput = await adapter.readInput();
 
-    // 检查是否结束对话
     if (userInput.toLowerCase() === "ok" || userInput.toLowerCase() === "完成") {
       infoCollected = true;
       break;
     }
     if (userInput === "") {
-      console.log(chalk.gray("输入 'ok' 或 '完成' 才会生成配置哦~"));
+      adapter.printSystem("输入 'ok' 或 '完成' 才会生成配置哦~");
       continue;
     }
 
     conversationHistory.push({ role: "user", content: userInput });
 
-    // 调用 V4 Pro
     let response: string;
     try {
-      response = await callProWithRetry(proClient, conversationHistory);
+      response = await callProWithRetry(proClient, conversationHistory, adapter);
     } catch (err) {
-      console.log(chalk.red(`\nAI 回复失败: ${(err as Error).message}`));
-      console.log(chalk.gray("请重试或输入 'ok' 结束对话。"));
+      adapter.printError(`AI 回复失败: ${(err as Error).message}`);
+      adapter.printSystem("请重试或输入 'ok' 结束对话。");
       continue;
     }
 
     conversationHistory.push({ role: "assistant", content: response });
-    console.log(chalk.magenta("\n向导: ") + response);
+    adapter.printSystem("[向导] " + response);
 
-    // 检查 AI 是否表示信息足够
     if (response.includes("我了解得差不多了") || 
         response.includes("让我帮你整理") ||
         response.includes("信息已经足够") ||
         response.includes("可以开始生成")) {
-      console.log(chalk.cyan("\n信息收集完成！输入 'ok' 生成配置，或继续补充："));
+      adapter.printSystem("信息收集完成！输入 'ok' 生成配置，或继续补充：");
     }
   }
 
-  // 第二阶段：结构化输出
-  console.log(chalk.cyan("\n═══════════════════════════════"));
-  console.log(chalk.cyan("  正在生成配置..."));
-  console.log(chalk.cyan("═══════════════════════════════\n"));
+  adapter.printSystem("\n═══════════════════════════════");
+  adapter.printSystem("  正在生成配置...");
+  adapter.printSystem("═══════════════════════════════\n");
 
   // 构建结构化提示
   const conversationText = conversationHistory
@@ -320,33 +304,32 @@ export async function runInit(
 
   let proResponse: ProResponse;
   try {
-    const raw = await callProWithRetry(proClient, [{ role: "user", content: structurePrompt }]);
+    const raw = await callProWithRetry(proClient, [{ role: "user", content: structurePrompt }], adapter);
     proResponse = parseInitResponse(raw);
   } catch (err) {
-    console.log(chalk.red(`\n配置生成失败: ${(err as Error).message}`));
-    const retry = await question(rl, chalk.cyan("是否重试？[Y/n]: "));
+    adapter.printError(`配置生成失败: ${(err as Error).message}`);
+    adapter.printSystem("是否重试？输入 n 退出，其他继续：");
+    const retry = await adapter.readInput();
     if (retry.toLowerCase() === "n") {
-      rl.close();
-      process.exit(1);
+      throw new Error("用户取消初始化");
     }
-    const raw = await callProWithRetry(proClient, [{ role: "user", content: structurePrompt }]);
+    const raw = await callProWithRetry(proClient, [{ role: "user", content: structurePrompt }], adapter);
     proResponse = parseInitResponse(raw);
   }
 
   let currentResult = toInitResult(proResponse);
-  displayResult(currentResult);
+  displayResult(currentResult, adapter);
 
-  // 第三阶段：用户确认/修改
-  console.log(chalk.cyan("满意吗？直接输入反馈修改，或输入 ok 保存开始聊天：\n"));
+  adapter.printSystem("满意吗？直接输入反馈修改，或输入 ok 保存开始聊天：");
 
   while (true) {
-    const feedback = await question(rl, chalk.gray("> "));
+    const feedback = await adapter.readInput();
 
     if (feedback.toLowerCase() === "ok" || feedback === "") {
       break;
     }
 
-    console.log(chalk.cyan("\n正在修改设定...\n"));
+    adapter.printSystem("正在修改设定...");
 
     const modificationPrompt = `你是一个角色设定引擎。以下是当前的角色设定和世界设定。
 
@@ -363,17 +346,16 @@ ${JSON.stringify(currentResult.worldEntries, null, 2)}
 输出严格的 JSON，不要输出任何其他文字。`;
 
     try {
-      const raw = await callProWithRetry(proClient, [{ role: "user", content: modificationPrompt }]);
+      const raw = await callProWithRetry(proClient, [{ role: "user", content: modificationPrompt }], adapter);
       const updatedResponse = parseInitResponse(raw);
       currentResult = toInitResult(updatedResponse);
     } catch (err) {
-      console.log(chalk.red(`\n修改失败: ${(err as Error).message}，保持上一版本。`));
+      adapter.printError(`修改失败: ${(err as Error).message}，保持上一版本。`);
     }
 
-    displayResult(currentResult);
-    console.log(chalk.cyan("继续反馈修改，或输入 ok 保存：\n"));
+    displayResult(currentResult, adapter);
+    adapter.printSystem("继续反馈修改，或输入 ok 保存：");
   }
 
-  rl.close();
   return currentResult;
 }

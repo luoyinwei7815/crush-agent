@@ -9,7 +9,6 @@ const memoryContent = document.getElementById("memory-content");
 const memoryRefreshBtn = document.getElementById("memory-refresh-btn");
 const profileContent = document.getElementById("profile-content");
 const profileRefreshBtn = document.getElementById("profile-refresh-btn");
-const dreamContent = document.getElementById("dream-content");
 const worldEntriesList = document.getElementById("world-entries-list");
 const worldKeys = document.getElementById("world-keys");
 const worldContentInput = document.getElementById("world-content");
@@ -36,6 +35,8 @@ let ws = null;
 let currentAssistantEl = null;
 let reconnectTimer = null;
 let typingEl = null;
+let isResponding = false;
+let isFirstConnect = true;
 
 function showTypingIndicator() {
   if (typingEl) return;
@@ -55,7 +56,8 @@ function removeTypingIndicator() {
 
 function connect() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${protocol}//${location.host}/ws`);
+  const token = new URLSearchParams(location.search).get("token") || "";
+  ws = new WebSocket(`${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`);
 
   ws.onopen = () => {
     statusBar.textContent = "已连接";
@@ -63,12 +65,15 @@ function connect() {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
-    ws.send(JSON.stringify({ type: "command", content: "/memory" }));
-    ws.send(JSON.stringify({ type: "command", content: "/whoami" }));
-    ws.send(JSON.stringify({ type: "command", content: "/world" }));
-    setTimeout(() => {
-      ws.send(JSON.stringify({ type: "command", content: "/history" }));
-    }, 200);
+    if (isFirstConnect) {
+      isFirstConnect = false;
+      ws.send(JSON.stringify({ type: "command", content: "/memory" }));
+      ws.send(JSON.stringify({ type: "command", content: "/whoami" }));
+      ws.send(JSON.stringify({ type: "command", content: "/world" }));
+      setTimeout(() => {
+        ws.send(JSON.stringify({ type: "command", content: "/history" }));
+      }, 200);
+    }
   };
 
   ws.onmessage = (event) => {
@@ -82,7 +87,11 @@ function connect() {
     handleMessage(data);
   };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
+    if (event.code === 4001) {
+      statusBar.textContent = "认证失败，请使用正确的连接 URL";
+      return;
+    }
     statusBar.textContent = "已断开，重连中...";
     scheduleReconnect();
   };
@@ -116,6 +125,10 @@ function handleMessage(data) {
       break;
 
     case "start":
+      isResponding = true;
+      sendBtn.disabled = true;
+      messageInput.disabled = true;
+      sendBtn.textContent = "回复中...";
       showTypingIndicator();
       currentAssistantEl = addMessage("", "assistant");
       break;
@@ -123,6 +136,11 @@ function handleMessage(data) {
     case "end":
       removeTypingIndicator();
       currentAssistantEl = null;
+      isResponding = false;
+      sendBtn.disabled = false;
+      messageInput.disabled = false;
+      sendBtn.textContent = "发送";
+      messageInput.focus();
       break;
 
     case "status":
@@ -149,22 +167,15 @@ function handleMessage(data) {
         console.error("Config parse error:", e);
       }
       break;
-
-    case "memory_content":
-      memoryContent.textContent = data.content;
-      break;
-
-    case "dream_report":
-      handleDreamReport(data.content);
-      break;
   }
 }
 
 function handleSystemMessage(content) {
-  if (content.includes("=== 长期记忆 ===")) {
-    const memoryMatch = content.match(/=== 长期记忆 ===\n([\s\S]*?)\n===============/);
+  if (content.includes("=== 对话概要 ===")) {
+    const memoryMatch = content.match(/=== 对话概要 ===\n([\s\S]*?)\n===============/);
     if (memoryMatch) {
-      memoryContent.textContent = memoryMatch[1].trim() || "(暂无记忆)";
+      memoryContent.textContent = memoryMatch[1].trim() || "(暂无概要，使用 /summarize 生成)";
+      return;
     }
   }
 
@@ -172,6 +183,7 @@ function handleSystemMessage(content) {
     const profileMatch = content.match(/=== 我认识的你 ===\n([\s\S]*?)\n=================/);
     if (profileMatch) {
       profileContent.textContent = profileMatch[1].trim() || "还不太了解你，多聊聊吧~";
+      return;
     }
   }
 
@@ -179,15 +191,18 @@ function handleSystemMessage(content) {
     const worldMatch = content.match(/=== 世界书 ===\n([\s\S]*?)\n=============/);
     if (worldMatch) {
       parseWorldEntries(worldMatch[1].trim());
+      return;
     }
   }
 
   if (content.includes("世界书为空")) {
     renderWorldEntries([]);
+    return;
   }
 
   if (content.includes("已删除世界书条目") || content.includes("已添加世界书条目")) {
     setTimeout(() => refreshWorldEntries(), 100);
+    return;
   }
 
   if (content.includes("=== 今日对话 ===")) {
@@ -272,15 +287,6 @@ function refreshWorldEntries() {
   }
 }
 
-function handleDreamReport(content) {
-  try {
-    const report = JSON.parse(content);
-    dreamContent.textContent = JSON.stringify(report, null, 2);
-  } catch {
-    dreamContent.textContent = content;
-  }
-}
-
 function parseStatus(text) {
   const cacheMatch = text.match(/缓存:\s*([\d.]+)%/);
   const modelMatch = text.match(/模型:\s*(\S+)/);
@@ -308,6 +314,7 @@ function scrollToBottom() {
 }
 
 function sendMessage() {
+  if (isResponding) return;
   const text = messageInput.value.trim();
   if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
 
@@ -450,6 +457,63 @@ personaImport.addEventListener("click", () => {
     reader.readAsText(file);
   };
   input.click();
+});
+
+// ===== 文件拖拽导入 =====
+
+const chatPanel = document.getElementById("chat-panel");
+let dragCounter = 0;
+
+chatPanel.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  dragCounter++;
+  chatPanel.classList.add("drag-over");
+});
+
+chatPanel.addEventListener("dragleave", (e) => {
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter === 0) chatPanel.classList.remove("drag-over");
+});
+
+chatPanel.addEventListener("dragover", (e) => {
+  e.preventDefault();
+});
+
+chatPanel.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  chatPanel.classList.remove("drag-over");
+
+  const files = Array.from(e.dataTransfer.files);
+  const validExts = [".md", ".txt"];
+  const MAX_SIZE = 100 * 1024; // 100KB
+
+  for (const file of files) {
+    const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (!validExts.includes(ext)) {
+      addMessage(`不支持的文件类型: ${file.name}（仅支持 .md / .txt）`, "error");
+      continue;
+    }
+    if (file.size > MAX_SIZE) {
+      addMessage(`文件太大: ${file.name}（最大 100KB）`, "error");
+      continue;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target.result;
+      if (!content.trim()) {
+        addMessage(`文件为空: ${file.name}`, "error");
+        return;
+      }
+      addMessage(`📎 ${file.name}`, "user");
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "message", content }));
+      }
+    };
+    reader.readAsText(file);
+  }
 });
 
 connect();

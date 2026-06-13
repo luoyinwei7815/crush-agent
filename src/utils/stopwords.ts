@@ -7,5 +7,8 @@ export const STOP_WORDS: ReadonlySet<string> = new Set([
   "可以", "可能", "不是", "已经", "什么", "怎么",
   "但是", "然后", "因为", "所以", "如果", "虽然", "或者",
   "一个", "一些", "很多",
+]);
+
+export const SEMANTIC_WORDS: ReadonlySet<string> = new Set([
   "喜欢", "经常", "每天", "总是", "习惯", "偏好", "最爱",
 ]);

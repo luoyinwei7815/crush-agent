@@ -80,7 +80,7 @@ export async function runSetup(): Promise<SetupResult> {
     const config = {
       api: { base_url: baseUrl, key: apiKey, model },
       context: { fold_threshold: 0.75, fold_aggressive_threshold: 0.78, force_summary_threshold: 0.80, tail_fraction: 0.2, tail_fraction_aggressive: 0.1 },
-      memory: { dream: { min_score: 0.6, min_recurrence: 2 } },
+      memory: {},
       world: { token_budget: 4000, scan_depth: 8 },
     };
     writeFileSync(configPath, yaml.dump(config), "utf-8");
@@ -133,7 +133,7 @@ export async function runSetup(): Promise<SetupResult> {
     const defaultConfig = {
       api: { base_url: "https://api.deepseek.com/v1", key: "sk-xxxx", model: "deepseek-v4-flash" },
       context: { fold_threshold: 0.75, fold_aggressive_threshold: 0.78, force_summary_threshold: 0.80, tail_fraction: 0.2, tail_fraction_aggressive: 0.1 },
-      memory: { dream: { min_score: 0.6, min_recurrence: 2 } },
+      memory: {},
       world: { token_budget: 4000, scan_depth: 8 },
     };
     writeFileSync(configPath, yaml.dump(defaultConfig), "utf-8");

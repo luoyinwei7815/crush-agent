@@ -1,18 +1,51 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { resolve, dirname } from "path";
 import type { UserProfile, IUserProfile } from "../core/types";
-import { STOP_WORDS } from "../utils/stopwords";
+import type { DeepSeekClient, ChatMessage } from "../api/deepseek";
 import { ensureDir } from "../utils/fs";
 
 export type { UserProfile } from "../core/types";
 
+const ANALYZE_PROMPT = `你是用户画像分析师。基于以下对话记录，提取关于**用户本人**的真实特征。
+
+对话记录：
+{conversationText}
+
+当前画像（如有）：
+{currentProfile}
+
+提取维度：
+1. 基本信息：用户的名字/自称（不是角色名）
+2. 偏好：用户的审美偏好、内容偏好、交互偏好
+3. 习惯：用户的使用习惯、交流模式
+4. 情绪模式：用户常见的情绪状态
+5. 常聊话题：用户经常讨论的话题（不是角色台词）
+
+关键规则：
+- 只提取**用户本人**的特征，忽略角色扮演中的台词
+- 如果是角色扮演对话，推断的是"用户喜欢什么样的角色/场景"，不是角色说了什么
+- 与当前画像不矛盾的信息不要重复添加
+- 每个维度最多 5 条，精炼准确
+- 如果某个维度没有新信息，输出空数组
+
+输出严格 JSON：
+{
+  "name": "用户的名字（如果没提到就留空）",
+  "preferences": ["偏1", "偏2"],
+  "habits": ["习惯1"],
+  "emotions": ["情绪1"],
+  "topics": ["话题1", "话题2"]
+}`;
+
 export class UserProfileManager implements IUserProfile {
   private profilePath: string;
   private profile: UserProfile;
+  private api?: DeepSeekClient;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, api?: DeepSeekClient) {
     this.profilePath = resolve(process.cwd(), dataDir, "USER.md");
     this.profile = this.load();
+    this.api = api;
   }
 
   private load(): UserProfile {
@@ -94,92 +127,41 @@ export class UserProfileManager implements IUserProfile {
     return profile;
   }
 
-  analyzeNotes(notes: string[]): Partial<UserProfile> {
-    const result: Partial<UserProfile> = {
-      preferences: [],
-      habits: [],
-      emotions: [],
-      topics: [],
-    };
-
-    const allText = notes.join("\n");
-
-    const namePatterns = [
-      /我叫([\u4e00-\u9fa5a-zA-Z]{1,10})/,
-      /我是([\u4e00-\u9fa5a-zA-Z]{1,10})/,
-      /叫我([\u4e00-\u9fa5a-zA-Z]{1,10})/,
-    ];
-
-    for (const pattern of namePatterns) {
-      const match = allText.match(pattern);
-      if (match?.[1]) {
-        result.name = match[1];
-        break;
-      }
+  async analyzeConversations(conversations: { role: string; content: string }[]): Promise<Partial<UserProfile>> {
+    if (!this.api || conversations.length === 0) {
+      return {};
     }
 
-    const preferencePatterns = [
-      /喜欢([\u4e00-\u9fa5a-zA-Z0-9]{2,20})/g,
-      /爱([\u4e00-\u9fa5a-zA-Z0-9]{2,20})/g,
-      /偏好([\u4e00-\u9fa5a-zA-Z0-9]{2,20})/g,
-    ];
+    const conversationText = conversations
+      .map((e) => `${e.role === "user" ? "用户" : "AI"}: ${e.content}`)
+      .join("\n");
 
-    for (const pattern of preferencePatterns) {
-      let match;
-      while ((match = pattern.exec(allText)) !== null) {
-        if (match[1] && !result.preferences!.includes(match[1])) {
-          result.preferences!.push(match[1]);
-        }
-      }
+    const currentProfile = this.toMarkdown() || "（暂无画像）";
+    const prompt = ANALYZE_PROMPT
+      .replace("{conversationText}", conversationText)
+      .replace("{currentProfile}", currentProfile);
+
+    const messages: ChatMessage[] = [{ role: "user", content: prompt }];
+    const raw = await this.api.collect(messages, 2048);
+
+    try {
+      const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      const jsonStr = codeBlockMatch ? codeBlockMatch[1]!.trim() : raw.match(/\{[\s\S]*\}/)?.[0] ?? raw;
+      const parsed = JSON.parse(jsonStr) as Partial<UserProfile>;
+
+      // 验证并清理
+      const result: Partial<UserProfile> = {};
+      if (parsed.name && typeof parsed.name === "string") result.name = parsed.name;
+      if (Array.isArray(parsed.preferences)) result.preferences = parsed.preferences.filter((s) => typeof s === "string" && s.trim());
+      if (Array.isArray(parsed.habits)) result.habits = parsed.habits.filter((s) => typeof s === "string" && s.trim());
+      if (Array.isArray(parsed.emotions)) result.emotions = parsed.emotions.filter((s) => typeof s === "string" && s.trim());
+      if (Array.isArray(parsed.topics)) result.topics = parsed.topics.filter((s) => typeof s === "string" && s.trim());
+
+      return result;
+    } catch {
+      console.error("[UserProfile] LLM 输出解析失败:", raw.slice(0, 200));
+      return {};
     }
-
-    const habitPatterns = [
-      /每天([\u4e00-\u9fa5a-zA-Z0-9]{2,20})/g,
-      /经常([\u4e00-\u9fa5a-zA-Z0-9]{2,20})/g,
-      /总是([\u4e00-\u9fa5a-zA-Z0-9]{2,20})/g,
-    ];
-
-    for (const pattern of habitPatterns) {
-      let match;
-      while ((match = pattern.exec(allText)) !== null) {
-        if (match[1] && !result.habits!.includes(match[1])) {
-          result.habits!.push(match[1]);
-        }
-      }
-    }
-
-    const emotionKeywords = ["开心", "难过", "累", "烦", "兴奋", "焦虑", "生气", "高兴", "伤心", "紧张", "放松", "无聊", "期待", "失望"];
-    for (const keyword of emotionKeywords) {
-      if (allText.includes(keyword) && !result.emotions!.includes(keyword)) {
-        result.emotions!.push(keyword);
-      }
-    }
-
-    const wordCounts = new Map<string, number>();
-    const segments = allText.split(/[\s,，。！？、；：""''（）()\[\]【】\n\r]+/).filter(Boolean);
-    for (const segment of segments) {
-      for (let size = 2; size <= 4; size++) {
-        for (let i = 0; i <= segment.length - size; i++) {
-          const gram = segment.slice(i, i + size);
-          if (/[\u4e00-\u9fa5]/.test(gram)) {
-            wordCounts.set(gram, (wordCounts.get(gram) ?? 0) + 1);
-          }
-        }
-      }
-    }
-
-    for (const [word, count] of wordCounts) {
-      if (count >= 3 && !STOP_WORDS.has(word) && word.length >= 2) {
-        result.topics!.push(word);
-      }
-    }
-
-    if (result.preferences!.length === 0) delete result.preferences;
-    if (result.habits!.length === 0) delete result.habits;
-    if (result.emotions!.length === 0) delete result.emotions;
-    if (result.topics!.length === 0) delete result.topics;
-
-    return result;
   }
 
   update(newData: Partial<UserProfile>): void {
@@ -218,6 +200,12 @@ export class UserProfileManager implements IUserProfile {
         }
       }
     }
+
+    // 限制每个维度最多 10 条
+    this.profile.preferences = this.profile.preferences.slice(-10);
+    this.profile.habits = this.profile.habits.slice(-10);
+    this.profile.emotions = this.profile.emotions.slice(-10);
+    this.profile.topics = this.profile.topics.slice(-10);
 
     this.profile.lastUpdated = new Date().toISOString();
     this.save();

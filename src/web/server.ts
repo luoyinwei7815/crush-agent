@@ -21,9 +21,11 @@ export class WebServer {
   private options: WebServerOptions;
   private inputResolve: ((value: string) => void) | null = null;
   private messageQueue: string[] = [];
+  private authToken: string;
 
   constructor(options: WebServerOptions) {
     this.options = options;
+    this.authToken = crypto.randomUUID();
   }
 
   start(): void {
@@ -36,6 +38,10 @@ export class WebServer {
         const url = new URL(req.url);
 
         if (url.pathname === "/ws") {
+          const token = url.searchParams.get("token");
+          if (token !== this.authToken) {
+            return new Response("Unauthorized", { status: 401 });
+          }
           const clientId = crypto.randomUUID();
           const upgraded = server.upgrade(req, { data: { clientId } });
           if (upgraded) {
@@ -100,16 +106,22 @@ export class WebServer {
           }
         },
         close: (ws: ServerWebSocket<WsData>) => {
-          const clientId = ws.data?.clientId;
-          if (clientId) {
-            this.clients.delete(clientId);
-            this.options.onDisconnect(clientId);
+          try {
+            const clientId = ws.data?.clientId;
+            if (clientId) {
+              this.clients.delete(clientId);
+              this.options.onDisconnect(clientId);
+            }
+          } catch (err) {
+            console.error("WebSocket close handler error:", err);
           }
         },
       },
     });
 
     console.log(`Web 服务器已启动: http://${host}:${port}`);
+    const displayHost = host === "0.0.0.0" ? "localhost" : host;
+    console.log(`连接 URL: http://${displayHost}:${port}/?token=${this.authToken}`);
   }
 
   broadcast(data: { type: string; content: string }): void {
@@ -133,6 +145,10 @@ export class WebServer {
 
   getClientCount(): number {
     return this.clients.size;
+  }
+
+  getAuthToken(): string {
+    return this.authToken;
   }
 
   waitForInput(): Promise<string> {

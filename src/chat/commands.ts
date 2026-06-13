@@ -1,22 +1,28 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import type { ChatMessage, DeepSeekClient } from "../api/deepseek";
-import { composePrefix } from "../prefix/compose";
 import type { ImmutablePrefix } from "../prefix/immutable";
-import { TOOL_DEFINITIONS } from "./tools";
 import type { IMemory, IWorld, IPersona, IUserProfile } from "../core/types";
 import type { DreamSystem } from "../memory/dream";
+import type { SummaryMemory } from "../memory/summary";
 import type { PrefixGuard } from "../prefix/guard";
 import type { OutputAdapter } from "../ui/adapter";
 import type { ConversationStore } from "../memory/conversation";
 import type { CorrectEngine } from "../persona/correct";
 import type { MemorySearch } from "../memory/search";
 import { ensureDir } from "../utils/fs";
+import { rebuildPrefix } from "./prefix-utils";
+
+function doRebuildPrefix(ctx: CommandContext): void {
+  const newPrefix = rebuildPrefix(ctx.persona, ctx.userProfile, ctx.guard);
+  ctx.setPrefix(newPrefix);
+}
 
 export interface CommandContext {
   api: DeepSeekClient;
   persona: IPersona;
   memory: IMemory;
+  summary: SummaryMemory;
   world: IWorld;
   dream: DreamSystem;
   conversations: ConversationStore;
@@ -57,10 +63,22 @@ export async function dispatchCommand(input: string, ctx: CommandContext): Promi
   }
 
   if (/纠正/.test(input)) {
-    const isCorrect = await ctx.correct.confirmIntent(input);
-    if (isCorrect) {
-      const ch = prefixCmds.find((p) => p.prefix === "/correct")?.handler;
-      if (ch) return ch(input, ctx);
+    const ch = prefixCmds.find((p) => p.prefix === "/correct")?.handler;
+    if (!ch) return null;
+
+    if (/^纠正[：:]/.test(input) || /^纠正\s+\S/.test(input)) {
+      console.log(`[纠正] 明确指令，跳过意图判断，直接执行 /correct`);
+      return ch(input, ctx);
+    }
+
+    try {
+      const isCorrect = await ctx.correct.confirmIntent(input);
+      if (isCorrect) {
+        console.log(`[纠正] 意图识别: 是纠正`);
+        return ch(input, ctx);
+      }
+    } catch (err) {
+      console.error(`纠正意图识别失败: ${(err as Error).message}`);
     }
   }
 
@@ -84,28 +102,96 @@ exact("/quit", async (_a, ctx): Promise<CommandResult> => {
 });
 
 exact("/memory", (_a, ctx): CommandResult => {
-  const index = ctx.memory.getIndex();
-  ctx.adapter.printSystem("\n=== 长期记忆 ===");
-  ctx.adapter.printSystem(index || "(暂无记忆)");
+  const recent = ctx.summary.getRecent();
+  ctx.adapter.printSystem("\n=== 对话概要 ===");
+  if (recent) {
+    const bodyStart = recent.indexOf("---", 3);
+    const body = bodyStart !== -1 ? recent.slice(bodyStart + 3).trim() : recent;
+    ctx.adapter.printSystem(body);
+  } else {
+    ctx.adapter.printSystem("(暂无概要，使用 /summarize 生成)");
+  }
   ctx.adapter.printSystem("===============\n");
   return "handled";
 });
 
 exact("/dream", async (_a, ctx): Promise<CommandResult> => {
-  ctx.adapter.printSystem("\n正在整理记忆...");
-  const report = await ctx.dream.sweep();
-  ctx.adapter.printSystem(`\n=== Dream 报告 ===`);
-  ctx.adapter.printSystem(`提取候选: ${report.lightProcessed} 条`);
-  ctx.adapter.printSystem(`晋升记忆: ${report.deepPromoted} 条`);
-  ctx.adapter.printSystem(`发现主题: ${report.remThemes.join(", ") || "无"}`);
   ctx.adapter.printSystem("\n🌙 正在优化人格...");
   try {
     await ctx.dreamOptimize(30);
   } catch (err) {
     console.error("人格优化失败:", err);
-    ctx.adapter.printSystem("⚠ 人格优化失败，但记忆提取已完成");
+    ctx.adapter.printSystem("⚠ 人格优化失败");
   }
-  ctx.adapter.printSystem(`===============\n`);
+  ctx.adapter.printSystem("===============\n");
+  return "handled";
+});
+
+exact("/summarize", async (_a, ctx): Promise<CommandResult> => {
+  ctx.adapter.printSystem("\n📝 正在生成对话概要...");
+  try {
+    const days = 3;
+    const recent = ctx.conversations.getRecent(days * 24 * 60);
+    if (recent.length === 0) {
+      ctx.adapter.printSystem("暂无对话记录，无法生成概要");
+      return "handled";
+    }
+    await ctx.summary.summarize(recent, days);
+    ctx.adapter.printSystem("✓ 对话概要已生成，使用 /memory 查看");
+  } catch (err) {
+    console.error("概要生成失败:", err);
+    ctx.adapter.printError(`概要生成失败: ${(err as Error).message}`);
+  }
+
+  // 顺便更新用户画像
+  if (ctx.userProfile) {
+    ctx.adapter.printSystem("📝 正在更新用户画像...");
+    try {
+      const recent = ctx.conversations.getRecent(3 * 24 * 60);
+      if (recent.length > 0) {
+        const profileData = await ctx.userProfile.analyzeConversations(recent);
+        if (Object.keys(profileData).length > 0) {
+          ctx.userProfile.update(profileData);
+          ctx.adapter.printSystem("✓ 用户画像已更新");
+        } else {
+          ctx.adapter.printSystem("画像无需更新");
+        }
+      }
+    } catch (err) {
+      console.error("画像更新失败:", err);
+      ctx.adapter.printSystem("⚠ 画像更新失败");
+    }
+  }
+
+  ctx.adapter.printSystem("===============\n");
+  return "handled";
+});
+
+exact("/profile-update", async (_a, ctx): Promise<CommandResult> => {
+  if (!ctx.userProfile) {
+    ctx.adapter.printSystem("用户画像模块未启用");
+    return "handled";
+  }
+  ctx.adapter.printSystem("\n📝 正在分析对话并更新画像...");
+  try {
+    const recent = ctx.conversations.getRecent(7 * 24 * 60);
+    if (recent.length === 0) {
+      ctx.adapter.printSystem("暂无对话记录");
+      return "handled";
+    }
+    const profileData = await ctx.userProfile.analyzeConversations(recent);
+    if (Object.keys(profileData).length > 0) {
+      ctx.userProfile.update(profileData);
+      ctx.adapter.printSystem("✓ 用户画像已更新:");
+      ctx.adapter.printSystem(ctx.userProfile.toMarkdown() || "（空）");
+    } else {
+      ctx.adapter.printSystem("未发现新的用户特征");
+    }
+  } catch (err) {
+    console.error("画像更新失败:", err);
+    ctx.adapter.printError(`画像更新失败: ${(err as Error).message}`);
+  }
+  ctx.adapter.printSystem("===============\n");
   return "handled";
 });
 
@@ -145,14 +231,7 @@ exact("/world", (_a, ctx): CommandResult => {
 
 exact("/reload-persona", (_a, ctx): CommandResult => {
   ctx.persona.reload();
-  const userContent = ctx.userProfile?.toMarkdown() ?? "";
-  const newP = composePrefix(
-    ctx.persona.compose() + (userContent ? "\n\n" + userContent : ""),
-    TOOL_DEFINITIONS
-  );
-  newP.freeze();
-  ctx.setPrefix(newP);
-  ctx.guard.reset();
+  doRebuildPrefix(ctx);
   ctx.adapter.printSystem("人格已重载");
   return "handled";
 });
@@ -190,8 +269,9 @@ exact("/help", (_a, ctx): CommandResult => {
       "\n=== 可用命令 ===",
       "",
       "【对话】",
-      "  /memory            查看长期记忆",
-      "  /dream             整理记忆 + 优化人格",
+      "  /memory            查看对话概要",
+      "  /summarize         手动生成对话概要",
+      "  /dream             优化人格",
       "  /whoami            查看用户画像",
       "  /constraints       查看硬约束",
       "",
@@ -253,7 +333,7 @@ prefix("/persona-file", (args, ctx): CommandResult => {
     return normalizedFull.startsWith(normalizedDir + "/") || normalizedFull === normalizedDir;
   });
   if (!isAllowed) {
-    ctx.adapter.printError("只能导入 data 或 src 目录下的文件");
+    ctx.adapter.printError("只能导入 data 目录下的文件");
     return "handled";
   }
 
@@ -316,32 +396,53 @@ prefix("/model", (args, ctx): CommandResult => {
 });
 
 prefix("/correct", async (args, ctx): Promise<CommandResult> => {
-  const recent = ctx.messages.slice(-6).map((m) => `${m.role}: ${m.content}`).join("\n");
-  const result = await ctx.correct.classify(args, ctx.persona.getConstraints(), recent);
-  switch (result.type) {
-    case "constraint":
-      if (result.conflict && result.conflict_with) {
-        ctx.adapter.printSystem(`⚠ 这条与现有约束"${result.conflict_with}"矛盾，要替换还是共存？`);
-        ctx.adapter.printSystem("输入 replace 替换，或其他任意键共存：");
-        if ((await ctx.adapter.readInput()).toLowerCase() === "replace") {
-          ctx.persona.removeConstraint(result.conflict_with);
+  try {
+    const recent = ctx.messages.slice(-6).map((m) => `${m.role}: ${m.content}`).join("\n");
+    const personaContent = ctx.persona.compose();
+    console.log(`[纠正] 输入: ${args.slice(0, 80)}`);
+    ctx.adapter.printSystem(`[纠正诊断] 输入: ${args.slice(0, 80)}...`);
+    ctx.adapter.printSystem(`[纠正诊断] 当前约束: ${ctx.persona.getConstraints() || "（无）"}`);
+
+    ctx.adapter.printSystem("正在分析纠正内容...");
+    const result = await ctx.correct.classify(args, ctx.persona.getConstraints(), recent, personaContent);
+    console.log(`[纠正] 分类结果: type=${result.type}, intent=${result.intent || "无"}, dims=${result.dimensions?.join(",") || "无"}, constraint=${result.constraint || "无"}`);
+    ctx.adapter.printSystem(`[纠正诊断] 分类: ${result.type} | intent: ${result.intent || "无"} | dims: ${result.dimensions?.join(",") || "无"} | constraint: ${result.constraint || "无"}`);
+
+    switch (result.type) {
+      case "constraint":
+        if (result.conflict && result.conflict_with) {
+          ctx.adapter.printSystem(`⚠ 这条与现有约束"${result.conflict_with}"矛盾，要替换还是共存？`);
+          ctx.adapter.printSystem("输入 replace 替换，或其他任意键共存：");
+          if ((await ctx.adapter.readInput()).toLowerCase() === "replace") {
+            ctx.persona.removeConstraint(result.conflict_with);
+          }
         }
-      }
-      ctx.persona.addConstraint(result.constraint!);
-      ctx.adapter.printSystem(`✓ 已添加约束："${result.constraint}"`);
-      break;
-    case "persona_optimize":
-      for (const dim of result.dimensions!) {
-        const d = dim as "identity" | "style" | "emotion" | "background";
-        const currentContent = ctx.persona.readFile(`${d}.md`);
-        const optimized = await ctx.correct.optimizeDimension(result.intent!, d, currentContent);
-        ctx.persona.writeFile(`${d}.md`, optimized);
-      }
-      ctx.adapter.printSystem(`✓ 已优化 ${result.dimensions!.join("/")}（${result.intent}）`);
-      break;
-    case "temporary":
-      ctx.adapter.printSystem("✓ 已收到反馈（对话历史中生效）");
-      break;
+        ctx.persona.addConstraint(result.constraint!);
+        ctx.persona.reload();
+        doRebuildPrefix(ctx);
+        ctx.adapter.printSystem(`✓ 已添加约束："${result.constraint}"（已立即生效）`);
+        break;
+      case "persona_optimize":
+        console.log(`[纠正] persona_optimize: intent="${result.intent}", dims=${result.dimensions!.join(",")}`);
+        ctx.adapter.printSystem("正在改写人格文件...");
+        for (const dim of result.dimensions!) {
+          const d = dim as "identity" | "style" | "emotion" | "background";
+          const currentContent = ctx.persona.readFile(`${d}.md`);
+          console.log(`[纠正] 改写 ${d}.md, 当前内容长度: ${currentContent.length}`);
+          const optimized = await ctx.correct.optimizeDimension(result.intent!, d, currentContent);
+          console.log(`[纠正] ${d}.md 改写完成, 新内容长度: ${optimized.length}`);
+          ctx.persona.writeFile(`${d}.md`, optimized);
+        }
+        ctx.persona.reload();
+        doRebuildPrefix(ctx);
+        ctx.adapter.printSystem(`✓ 已优化 ${result.dimensions!.join("/")}（${result.intent}，已立即生效）`);
+        break;
+      case "temporary":
+        ctx.adapter.printSystem("✓ 已收到反馈（对话历史中生效）");
+        break;
+    }
+  } catch (err) {
+    ctx.adapter.printError(`纠正处理失败: ${(err as Error).message}`);
   }
   return "handled";
 });

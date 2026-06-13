@@ -60,6 +60,7 @@ export class DeepSeekClient {
     this.client = new OpenAI({
       baseURL: config.base_url,
       apiKey: config.key,
+      timeout: 120_000,
     });
     this.defaultModel = config.model;
   }
@@ -86,6 +87,7 @@ export class DeepSeekClient {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      let hasYielded = false;
       try {
         const requestBody: Record<string, unknown> = {
           model,
@@ -111,6 +113,7 @@ export class DeepSeekClient {
         for await (const chunk of stream as AsyncIterable<OpenAI.ChatCompletionChunk>) {
           if (chunk.choices?.[0]?.delta?.content) {
             const content = chunk.choices[0].delta.content;
+            hasYielded = true;
             yield { type: "chunk", content };
           }
 
@@ -140,6 +143,8 @@ export class DeepSeekClient {
         return;
       } catch (error: unknown) {
         lastError = error as Error;
+
+        if (hasYielded) throw error;
 
         if (error instanceof OpenAI.APIError) {
           const statusCode = error.status;

@@ -5,6 +5,7 @@ import type { PrefixGuard } from "../prefix/guard";
 import type { ContextManager } from "../context/manager";
 import type { DreamSystem } from "../memory/dream";
 import type { MemorySearch } from "../memory/search";
+import type { SummaryMemory } from "../memory/summary";
 import type { OutputAdapter } from "../ui/adapter";
 import type { CorrectEngine } from "../persona/correct";
 
@@ -46,14 +47,6 @@ export interface IMemory {
   reindex(): void;
 }
 
-// ========== 每日笔记接口 ==========
-export interface IDailyNotes {
-  append(content: string): void;
-  today(): string;
-  recent(days: number): string[];
-  listFiles(): string[];
-}
-
 // ========== 用户画像接口 ==========
 export interface UserProfile {
   name: string;
@@ -65,7 +58,7 @@ export interface UserProfile {
 }
 
 export interface IUserProfile {
-  analyzeNotes(notes: string[]): Partial<UserProfile>;
+  analyzeConversations(conversations: { role: string; content: string }[]): Promise<Partial<UserProfile>>;
   update(newData: Partial<UserProfile>): void;
   getProfile(): UserProfile;
   toMarkdown(): string;
@@ -99,7 +92,7 @@ export interface ChatContext {
   api: DeepSeekClient;
   guard: PrefixGuard;
   context: ContextManager;
-  daily: IDailyNotes;
+  summary: SummaryMemory;
   dream: DreamSystem;
   search?: MemorySearch;
   userProfile?: IUserProfile;

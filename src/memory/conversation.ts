@@ -41,6 +41,7 @@ export class ConversationStore {
   }
 
   getRecent(minutes: number): ConversationEntry[] {
+    if (!existsSync(this.dir)) return [];
     const cutoff = Date.now() - minutes * 60 * 1000;
     const files = readdirSync(this.dir)
       .filter((f) => f.endsWith(".jsonl"))

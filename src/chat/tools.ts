@@ -1,5 +1,5 @@
 import type { ToolSpec } from "../prefix/immutable";
-import type { IMemory, IDailyNotes } from "../core/types";
+import type { IMemory } from "../core/types";
 import type { MemorySearch } from "../memory/search";
 
 export const TOOL_DEFINITIONS: ToolSpec[] = [
@@ -48,17 +48,6 @@ export const TOOL_DEFINITIONS: ToolSpec[] = [
       },
     },
   },
-  {
-    name: "note",
-    description:
-      "记录当前对话的要点到每日笔记。每轮对话结束时自动调用，或需要特别记录时手动调用。",
-    parameters: {
-      content: {
-        type: "string",
-        description: "笔记内容",
-      },
-    },
-  },
 ];
 
 export function toKebabCase(str: string): string {
@@ -74,7 +63,6 @@ export function executeTool(
   toolName: string,
   args: Record<string, string>,
   memory: IMemory,
-  daily: IDailyNotes,
   search?: MemorySearch
 ): string {
   switch (toolName) {
@@ -137,14 +125,6 @@ export function executeTool(
       memory.delete(name);
       if (search) search.removeMemory(name);
       return `已删除记忆: ${name}`;
-    }
-
-    case "note": {
-      const content = args.content ?? "";
-      if (!content) return "请提供笔记内容";
-
-      daily.append(content);
-      return "已记录笔记";
     }
 
     default:

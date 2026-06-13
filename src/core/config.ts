@@ -12,12 +12,7 @@ export interface AppConfig {
     tail_fraction_aggressive: number;
     max_tokens?: number;
   };
-  memory: {
-    dream: {
-      min_score: number;
-      min_recurrence: number;
-    };
-  };
+  memory: Record<string, unknown>;
   world?: {
     token_budget?: number;
     scan_depth?: number;

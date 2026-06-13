@@ -37,9 +37,18 @@ config.yaml
 # Finder (MacOS) folder config
 .DS_Store
 
+# logs
+crash.log
+
+# local scripts
+start-web.ps1
+
+# review / analysis documents
+txt/
+
 # runtime user data (privacy-sensitive)
 data/conversations/*.jsonl
-data/memory/daily/*.md
+data/memory/summaries/*.md
 data/memory/facts/*.md
 data/memory/facts/.archive/
 data/USER.md

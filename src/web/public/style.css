@@ -186,6 +186,29 @@ main {
   flex-direction: column;
   overflow: hidden;
   position: relative;
+  transition: var(--transition-fast);
+}
+
+#chat-panel.drag-over {
+  outline: 2px dashed var(--accent-rose);
+  outline-offset: -8px;
+  background: rgba(232, 160, 180, 0.04);
+}
+
+#chat-panel.drag-over::after {
+  content: '拖放 .md / .txt 文件到此处';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-style: italic;
+  color: var(--accent-rose);
+  opacity: 0.8;
+  pointer-events: none;
+  z-index: 10;
+  text-shadow: 0 0 20px rgba(232, 160, 180, 0.4);
 }
 
 #messages {

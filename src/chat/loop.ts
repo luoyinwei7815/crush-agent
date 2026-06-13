@@ -2,13 +2,15 @@ import { type ChatMessage, type ChatUsage } from "../api/deepseek";
 import type { DeepSeekClient } from "../api/deepseek";
 import { foldHistory } from "../context/fold";
 import type { CompressionDecision } from "../context/manager";
-import { composePrefix } from "../prefix/compose";
 import type { ImmutablePrefix } from "../prefix/immutable";
-import { parseToolCall, executeTool, TOOL_DEFINITIONS } from "./tools";
+import { parseToolCall, executeTool } from "./tools";
 import { dispatchCommand } from "./commands";
 import type { CommandContext } from "./commands";
+import { rebuildPrefix } from "./prefix-utils";
 import type { ChatContext, IMemory, IWorld, IPersona, IUserProfile } from "../core/types";
+import { estimateTokens } from "../utils/token";
 import type { DreamSystem } from "../memory/dream";
+import type { SummaryMemory } from "../memory/summary";
 import type { PrefixGuard } from "../prefix/guard";
 import type { OutputAdapter } from "../ui/adapter";
 import { ConversationStore } from "../memory/conversation";
@@ -65,14 +67,7 @@ async function executeDreamOptimization(
 
   if (result.optimized) {
     persona.reload();
-    const newPersonaContent = persona.compose();
-    const userContent = userProfile?.toMarkdown() ?? "";
-    const newPrefix = composePrefix(
-      newPersonaContent + (userContent ? "\n\n" + userContent : ""),
-      TOOL_DEFINITIONS
-    );
-    newPrefix.freeze();
-    guard.reset();
+    const newPrefix = rebuildPrefix(persona, userProfile, guard);
     adapter.printSystem("💫 人格已优化");
     return newPrefix;
   }
@@ -93,13 +88,19 @@ function assembleMessages(
   prefix: ImmutablePrefix,
   messages: ChatMessage[],
   memory: IMemory,
-  world: IWorld
+  world: IWorld,
+  summary: SummaryMemory
 ): ChatMessage[] {
   const sendMessages = [...prefix.toMessages()];
 
-  const memoryContext = memory.scanContext(messages);
-  if (memoryContext) {
-    sendMessages.push({ role: "system", content: memoryContext });
+  const summaryContext = summary.scanContext(messages);
+  if (summaryContext) {
+    sendMessages.push({ role: "system", content: summaryContext });
+  } else {
+    const memoryContext = memory.scanContext(messages);
+    if (memoryContext) {
+      sendMessages.push({ role: "system", content: memoryContext });
+    }
   }
 
   const worldContext = world.scanContext(messages);
@@ -112,7 +113,7 @@ function assembleMessages(
 }
 
 export async function chatLoop(ctx: ChatContext): Promise<void> {
-  const { api, guard, context, memory, daily, dream, world, persona, contextMax, adapter, search, userProfile, correct } = ctx;
+  const { api, guard, context, memory, summary, dream, world, persona, contextMax, adapter, search, userProfile, correct } = ctx;
   let { prefix } = ctx;
 
   const characterName = persona.getCharacterName();
@@ -122,12 +123,24 @@ export async function chatLoop(ctx: ChatContext): Promise<void> {
   const messages: ChatMessage[] = [];
   const conversations = new ConversationStore("data");
 
+  if (summary.needsSummary()) {
+    adapter.printSystem("📝 距上次概要已超过 3 天，正在生成对话概要...");
+    try {
+      const recent = conversations.getRecent(3 * 24 * 60);
+      await summary.summarize(recent, 3);
+      adapter.printSystem("✓ 对话概要已生成");
+    } catch (err) {
+      console.error("概要生成失败:", err);
+      adapter.printError("概要生成失败，将在下次启动时重试");
+    }
+  }
+
   let lastActivityTime = Date.now();
   let idleTimer: ReturnType<typeof setInterval> | null = null;
   let isDreaming = false;
 
   const cmdCtx: CommandContext = {
-    api, persona, memory, world, dream, conversations, search, userProfile,
+    api, persona, memory, summary, world, dream, conversations, search, userProfile,
     correct, adapter, guard, messages, characterName,
     getPrefix: () => prefix,
     setPrefix(p) { prefix = p; },
@@ -164,12 +177,21 @@ export async function chatLoop(ctx: ChatContext): Promise<void> {
   while (true) {
     context.resetTurn();
 
+    console.log("[loop] 等待输入...");
     const input = await adapter.readInput();
+    console.log(`[loop] 收到: ${input.slice(0, 80)}`);
 
     lastActivityTime = Date.now();
     if (input === "") continue;
 
-    const result = await dispatchCommand(input, cmdCtx);
+    let result: "handled" | "quit" | null = null;
+    try {
+      result = await dispatchCommand(input, cmdCtx);
+    } catch (err) {
+      console.error(`[loop] 命令处理出错:`, err);
+      adapter.printError(`命令处理出错: ${(err as Error).message}`);
+      continue;
+    }
     if (result === "quit") {
       if (idleTimer) clearInterval(idleTimer);
       break;
@@ -189,7 +211,8 @@ export async function chatLoop(ctx: ChatContext): Promise<void> {
       adapter.printSystem(`[前缀变化: ${guardResult.reason}]`);
     }
 
-    const sendMessages = assembleMessages(prefix, messages, memory, world);
+    const sendMessages = assembleMessages(prefix, messages, memory, world, summary);
+    console.log(`[loop] API 调用，${sendMessages.length} 条消息`);
 
     adapter.startAssistant();
     let assistantContent = "";
@@ -214,13 +237,12 @@ export async function chatLoop(ctx: ChatContext): Promise<void> {
         toolCall.name,
         toolCall.args,
         memory,
-        daily,
         search
       );
       const cleanAssistantContent = assistantContent.replace(/```json\s*[\s\S]*?\s*```/g, "").trim();
       messages.push({ role: "assistant", content: cleanAssistantContent || `[调用工具: ${toolCall.name}]` });
       messages.push({ role: "system", content: `[工具结果: ${toolCall.name}]\n${toolResult}` });
-      const followUpMessages = assembleMessages(prefix, messages, memory, world);
+      const followUpMessages = assembleMessages(prefix, messages, memory, world, summary);
       adapter.startAssistant();
       let followUpContent = "";
       for await (const chunk of api.chat(followUpMessages)) {
@@ -240,14 +262,15 @@ export async function chatLoop(ctx: ChatContext): Promise<void> {
 
     messages.push({ role: "assistant", content: assistantContent });
 
-    const afterDecision = context.checkAfterTurn(
-      lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0, total_cost_estimate: 0 },
-      contextMax
-    );
+    const fallbackUsage = lastUsage ?? {
+      prompt_tokens: messages.reduce((sum, m) => sum + estimateTokens(m.content), 0),
+      completion_tokens: 0,
+      cache_hit_tokens: 0,
+      cache_miss_tokens: 0,
+      total_cost_estimate: 0,
+    };
+    const afterDecision = context.checkAfterTurn(fallbackUsage, contextMax);
     await executeCompression(afterDecision, messages, api, adapter);
-
-    const noteContent = input.length > 50 ? input.slice(0, 50) + "..." : input;
-    daily.append(`用户: ${noteContent}`);
 
     if (lastUsage) {
       adapter.printStatus(lastUsage, responseModel);
